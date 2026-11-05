@@ -26,8 +26,8 @@
 ```bash
 apt-get update
 apt-get install -y git
-git clone https://github.com/dfyzicka/debianstart.git
-cd debianstart
+git clone https://github.com/dfyzicka/DebStart.git
+cd Debstart
 bash bootstrap.sh
 ```
 
