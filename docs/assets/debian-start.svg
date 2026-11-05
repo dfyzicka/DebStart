@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="344" viewBox="0 0 1120 344" role="img" aria-labelledby="banner-title banner-description">
+  <title id="banner-title">Debian Start</title>
+  <desc id="banner-description">Терминальный мастер настройки Debian и Ubuntu. Схема трёх шагов показывает учётку и SSH, установку программ и выбор панелей.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" x2="1" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#182439"/>
+      <stop offset="0.61" stop-color="#111b2c"/>
+      <stop offset="1" stop-color="#0b1422"/>
+    </linearGradient>
+    <radialGradient id="rose" cx="0.09" cy="0" r="0.76">
+      <stop offset="0" stop-color="#a92858" stop-opacity=".38"/>
+      <stop offset="1" stop-color="#a92858" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#93a7c7" stroke-opacity=".09"/>
+    </pattern>
+    <clipPath id="frame">
+      <rect x="1" y="1" width="1118" height="342" rx="25"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1120" height="344" fill="url(#background)"/>
+    <rect width="1120" height="344" fill="url(#rose)"/>
+    <rect x="568" width="552" height="344" fill="url(#grid)"/>
+    <path d="M0 310H480l41-41h101M1048 0v24l-22 22h-52M1119 309h-84l-32-32h-65" fill="none" stroke="#91a6c8" stroke-opacity=".25"/>
+    <path d="M46 1h175" stroke="#fa7e9e" stroke-width="3"/>
+    <circle cx="521" cy="269" r="3" fill="#f77a9d"/>
+    <circle cx="1035" cy="309" r="3" fill="#65e0c3"/>
+  </g>
+  <rect x="1" y="1" width="1118" height="342" rx="25" fill="none" stroke="#425170"/>
+
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <rect x="54" y="47" width="30" height="26" rx="7" fill="#3e2b48" stroke="#72415d"/>
+    <path d="m62 55 5 5-5 5m8 0h6" fill="none" stroke="#ff8bab" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="96" y="65" fill="#f0afc1" font-size="12" font-weight="700" letter-spacing="2.1">МАСТЕР ДЛЯ VPS</text>
+
+    <text x="49" y="153" fill="#f4f7fc" font-size="74" font-weight="800" letter-spacing="-2.6">Debian <tspan fill="#ff81a2">Start</tspan></text>
+    <text x="54" y="198" fill="#f0f4fa" font-size="23" font-weight="700">Подготовь сервер за один запуск</text>
+    <text x="54" y="229" fill="#b8c7dc" font-size="17.5">Учётка, SSH, Docker и панели из одного меню.</text>
+
+    <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12" font-weight="700" letter-spacing=".8">
+      <rect x="54" y="268" width="153" height="28" rx="7" fill="#1b2b40" stroke="#3b536c"/>
+      <text x="69" y="286" fill="#c5d9ec">DEBIAN 12 / 13</text>
+      <rect x="218" y="268" width="208" height="28" rx="7" fill="#1b2b40" stroke="#3b536c"/>
+      <text x="233" y="286" fill="#c5d9ec">UBUNTU 22 / 24 / 26</text>
+    </g>
+  </g>
+
+  <g transform="translate(629 44)">
+    <rect x="7" y="8" width="433" height="253" rx="17" fill="#07101c" fill-opacity=".58"/>
+    <rect width="433" height="253" rx="17" fill="#101a2a" stroke="#465b77"/>
+    <path d="M17 0h399a17 17 0 0 1 17 17v32H0V17A17 17 0 0 1 17 0Z" fill="#21314a"/>
+    <path d="M0 49h433" stroke="#465b77"/>
+    <circle cx="23" cy="24" r="4" fill="#f77a9d"/>
+    <circle cx="38" cy="24" r="4" fill="#efbd79"/>
+    <circle cx="53" cy="24" r="4" fill="#68dec4"/>
+    <g font-family="DejaVu Sans Mono, Consolas, monospace">
+      <text x="72" y="29" fill="#e2ebfa" font-size="14">bootstrap.sh</text>
+      <text x="410" y="29" text-anchor="end" fill="#97b0cb" font-size="11" letter-spacing="1.1">DEBIAN START</text>
+    </g>
+
+    <path d="M31 79v101" stroke="#405b70" stroke-width="2"/>
+    <rect x="12" y="157" width="408" height="42" rx="9" fill="#18383d" stroke="#326260"/>
+    <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="11" font-weight="700" text-anchor="middle">
+      <circle cx="31" cy="80" r="12" fill="#26354b" stroke="#506783"/>
+      <text x="31" y="84" fill="#b9cce1">01</text>
+      <circle cx="31" cy="129" r="12" fill="#26354b" stroke="#506783"/>
+      <text x="31" y="133" fill="#b9cce1">02</text>
+      <circle cx="31" cy="178" r="12" fill="#66dfc4"/>
+      <text x="31" y="182" fill="#13352f">03</text>
+    </g>
+    <g font-family="DejaVu Sans, Arial, sans-serif" font-size="15.5" font-weight="700">
+      <text x="57" y="85" fill="#edf3ff">Пользователь и SSH</text>
+      <text x="57" y="134" fill="#edf3ff">Docker, Zsh и Python</text>
+      <text x="57" y="183" fill="#c4f8ed">Панели на выбор</text>
+    </g>
+    <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
+      <text x="410" y="84" text-anchor="end" fill="#a3bad1">key / password</text>
+      <text x="410" y="133" text-anchor="end" fill="#a3bad1">apt + uv</text>
+      <text x="410" y="182" text-anchor="end" fill="#92ead9">3x-ui / m-ui / dry</text>
+    </g>
+    <path d="M12 212h408" stroke="#34485f"/>
+    <text x="22" y="235" fill="#a9bbd0" font-family="DejaVu Sans, Arial, sans-serif" font-size="11.5">В конце мастер покажет адреса и команды входа</text>
+  </g>
+</svg>

@@ -1,0 +1,6 @@
+services:
+  m-ui:
+    environment:
+      MUI_PASSWORD: "${MUI_FIRST_PASSWORD:?missing first login password}"
+    logging:
+      driver: none

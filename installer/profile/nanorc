@@ -1,0 +1,20 @@
+
+set linenumbers  #нумерация строк
+
+set autoindent   #автоотступ
+
+set mouse  #включить мыш
+
+#set smooth  #плавна прокрутка
+
+set tabsize 4  #табуляция 4 символа
+
+set titlecolor black,yellow #цвет заголовка (white, black, blue, green, red, cyan, yellow, magenta)
+
+set keycolor black,yellow
+
+set statuscolor black,yellow
+
+set functioncolor yellow
+
+set numbercolor yellow,black
