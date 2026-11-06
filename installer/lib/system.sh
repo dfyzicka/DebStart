@@ -24,7 +24,7 @@ apt_run() (
   printf '\n'
   while true; do
     if LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get \
-      -o DPkg::Lock::Timeout=0 -o Dpkg::Options::=--force-confold "$@" 2>&1 |
+      -o DPkg::Lock::Timeout=0 -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confold "$@" </dev/null 2>&1 |
       tee "$apt_output"; then
       return 0
     else

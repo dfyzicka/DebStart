@@ -16,33 +16,41 @@ state_dir=$(mktemp -d)
 trap 'rm -rf -- "$state_dir"' EXIT
 (
   exec 3>"$state_dir/menu"
-  read_prompt() { printf '%s' "$fixture_selection"; }
-  fixture_selection=0
+  read_prompt() {
+    if [[ $1 == 'Какие этапы пропустить?' ]]; then
+      printf '%s' "$fixture_skips"
+    else
+      printf '%s' 'д'
+    fi
+  }
+  check_plan() { :; }
+  fixture_skips='1-12'
   ask_stages
   [[ -z ${STAGES[*]:-} ]]
-  fixture_selection='11 12'
+  fixture_skips=''
   ask_stages
+  [[ ${#STAGES[@]} == 12 ]]
   selected install_mui
   selected install_dry
-  ! selected install_xui
-  fixture_selection='2-5,8'
+  fixture_skips='1 3 7'
   ask_stages
-  [[ ${#STAGES[@]} == 5 ]]
+  [[ ${#STAGES[@]} == 9 ]]
   selected setup_admin_user
-  selected change_ssh_port
-  selected install_python
-  fixture_selection='кроме 1–3 7'
+  if selected change_root_password || selected configure_ssh || selected install_shell; then exit 1; fi
+  fixture_skips='1–3 7'
   ask_stages
   [[ ${#STAGES[@]} == 8 ]]
-  if selected change_root_password || selected configure_ssh || selected install_shell; then exit 1; fi
+  if selected change_root_password || selected setup_admin_user || selected configure_ssh || selected install_shell; then exit 1; fi
   selected install_packages
+  grep -Fq 'Пропустить · Пароль root' "$state_dir/menu"
+  grep -Fq 'Запустить  · Пакеты APT' "$state_dir/menu"
   ARCH=arm64
-  fixture_selection='кроме 1-10'
+  fixture_skips='1-10'
   ask_stages
   [[ ${#STAGES[@]} == 1 ]]
   selected install_dry
-  for invalid in 'кроме' 'кроме 0' '3-1' '1 3-99' '0 2'; do
-    if apply_stage_numbers "$invalid" first second third; then exit 1; fi
+  for invalid in '0' '3-1' '1 3-99' '2-'; do
+    if apply_skipped_stages "$invalid" first second third; then exit 1; fi
     [[ ${#STAGES[@]} == 1 ]]
     selected install_dry
   done
@@ -52,6 +60,8 @@ trap 'rm -rf -- "$state_dir"' EXIT
 (
   WORK_DIR=$state_dir
   apt-get() {
+    [[ $* == *'Dpkg::Use-Pty=0'* ]] || return 70
+    if IFS= read -r input; then return 70; fi
     if [[ -e $WORK_DIR/apt-retried ]]; then return 0; fi
     case "$fixture_apt" in
       lists)
@@ -73,7 +83,7 @@ trap 'rm -rf -- "$state_dir"' EXIT
   }
   for fixture_apt in lists dpkg; do
     rm -f -- "$WORK_DIR/apt-retried"
-    apt_run update > "$WORK_DIR/apt-test"
+    apt_run update <<< 'terminal input' > "$WORK_DIR/apt-test"
     [[ -f $WORK_DIR/apt-retried ]]
     grep -Fq 'APT занят' "$WORK_DIR/apt-test"
   done
@@ -132,7 +142,6 @@ grep -Fq '✓ Пароль root' "$state_dir/live.log"
               [set_server_hostname]=on [change_ssh_port]=on [install_packages]=on [install_shell]=on)
     fi
   }
-  check_plan() { :; }
   run_live() { shift; "$@"; }
   trace() { printf '%s\n' "$1" >> "$state_dir/order"; }
   change_root_password() { trace root; }

@@ -30,9 +30,11 @@ install_docker() {
       candidate=$(apt-cache policy docker-ce | awk '/Candidate:/ { print $2 }')
       if [[ -z $candidate || $candidate == '(none)' ]]; then
         apt_run install -y --no-install-recommends gpg
+        printf '%s\n' 'Загружаю ключ репозитория Docker.'
         curl --fail --silent --show-error --location --proto '=https' --retry 3 \
+          --connect-timeout 15 --max-time 60 \
           "$docker_repository/gpg" -o "$WORK_DIR/docker.asc"
-        fingerprint=$(gpg --batch --show-keys --with-colons "$WORK_DIR/docker.asc" |
+        fingerprint=$(gpg --batch --no-tty --show-keys --with-colons "$WORK_DIR/docker.asc" </dev/null |
           awk -F: '$1 == "fpr" && !seen++ { print $10 }')
         [[ $fingerprint == 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ]] ||
           fail 'Не совпал отпечаток ключа APT-репозитория Docker.'
@@ -47,6 +49,7 @@ Architectures: $ARCH
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
         install -m 0644 "$WORK_DIR/docker.sources" /etc/apt/sources.list.d/docker.sources
+        printf 'Подключаю репозиторий Docker · %s\n' "$DISTRO_CODENAME"
         apt_run update
       fi
       apt_run install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin

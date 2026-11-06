@@ -287,82 +287,80 @@ print_key_copy() {
     "$SSH_PORT" "$KEY_EXPORT_OWNER" "$scp_host" "$KEY_EXPORT_DIR" "$(ssh_key_name)"
 }
 
-apply_stage_numbers() {
-  local reply=$1 token first last number stage exclude=0
+apply_skipped_stages() {
+  local reply=$1 token first last number stage
   shift
   local -a available=("$@") choices=()
-  local -A marked=()
+  local -A skipped=()
   reply=${reply//–/-}
   reply=${reply//—/-}
-  read -ra choices <<< "${reply//,/ }"
-  if [[ -z ${choices[*]:-} ]]; then return 0; fi
-  if [[ ${choices[*]} == 0 ]]; then STAGES=(); return 0; fi
-  if [[ ${choices[0],,} == кроме ]]; then
-    exclude=1
-    choices=("${choices[@]:1}")
-    [[ -n ${choices[*]:-} ]] || return 1
-  fi
+  read -ra choices <<< "$reply"
   for token in "${choices[@]}"; do
     [[ $token =~ ^([1-9][0-9]?)(-([1-9][0-9]?))?$ ]] || return 1
     first=${BASH_REMATCH[1]}
     last=${BASH_REMATCH[3]:-$first}
     (( first <= last && last <= ${#available[@]} )) || return 1
     for ((number=first; number<=last; number++)); do
-      marked[${available[number-1]}]=1
+      skipped[${available[number-1]}]=1
     done
   done
   STAGES=()
   for stage in "${available[@]}"; do
-    if (( ${marked[$stage]:-0} != exclude )); then STAGES[$stage]=on; fi
+    if [[ -z ${skipped[$stage]:-} ]]; then STAGES[$stage]=on; fi
   done
 }
 
+confirm_stage_plan() {
+  local CURRENT_STAGE='План установки'
+  local stage action plan= answer
+  for stage in "$@"; do
+    action='Пропустить'
+    if selected "$stage"; then action='Запустить '; fi
+    plan+="$action · ${STAGE_LABELS[$stage]}"$'\n'
+  done
+  if (( DIALOG_AVAILABLE )); then
+    if ui --cr-wrap --defaultno --yes-label 'Запустить' --no-label 'Изменить' \
+      --yesno "$plan" 18 70; then return 0
+    elif [[ $? != 1 ]]; then cancel
+    fi
+    return 1
+  fi
+  printf '\n╭─ План установки ─╮\n%s' "$plan" >&3
+  answer=$(read_prompt 'д — запустить, Enter — изменить.') || cancel
+  [[ ${answer,,} == д || ${answer,,} == y ]]
+}
+
 ask_stages() {
-  local stage reply choice selection status label numbered= index=0
-  local hint=$'кроме 1-3 7 — пропустить эти этапы\n2-5 8 — выполнить · 0 — снять всё'
-  local -a available=() items=()
+  local CURRENT_STAGE='Какие этапы пропустить?'
+  local stage reply= problem label numbered= index=0
+  local hint=$'Пример ввода · 1 3 7 или 1-3 7\nПустой ввод — выполнить все после подтверждения.'
+  local -a available=()
   for stage in "${STAGE_ORDER[@]}"; do
     if [[ $stage == install_mui && $ARCH != amd64 ]]; then continue; fi
     available+=("$stage")
     index=$((index+1))
     printf -v label '%2d · %s' "$index" "${STAGE_LABELS[$stage]}"
-    items+=("$stage" "$label" "${STAGES[$stage]:-off}")
     numbered+="$label"$'\n'
   done
-  if (( DIALOG_AVAILABLE )); then
-    while true; do
-      if selection=$(ui --no-tags --separate-output --extra-button --extra-label 'По номерам' \
-        --checklist 'Пробел — отметить. Tab — кнопка «По номерам».' 0 70 12 "${items[@]}"); then
-        STAGES=()
-        while IFS= read -r stage; do
-          if [[ -n $stage ]]; then STAGES[$stage]=on; fi
-        done <<< "$selection"
-        return
-      else
-        status=$?
-        [[ $status == 3 ]] || cancel
-      fi
-      while reply=$(ui --cr-wrap --cancel-label 'Назад' --inputbox "$numbered$hint" 19 70); do
-        if apply_stage_numbers "$reply" "${available[@]}"; then return; fi
-        ui --msgbox 'Проверь номера и границы диапазонов.' 8 70 || break
-      done
-    done
-  fi
-  printf '%s\n' '╭──── Этапы установки ───────────────────────╮' >&3
-  index=0
-  for stage in "${available[@]}"; do
-    index=$((index+1))
-    choice=' '
-    if selected "$stage"; then choice=x; fi
-    label=${STAGE_LABELS[$stage]}
-    printf '│ %2s [%s] %s%*s │\n' "$index" "$choice" "$label" "$((35-${#label}))" '' >&3
-  done
-  printf '%s\n' '╰────────────────────────────────────────────╯' >&3
-  printf '%s\n' "$hint" >&3
   while true; do
-    reply=$(read_prompt 'Этапы. Enter — текущий выбор') || cancel
-    if apply_stage_numbers "$reply" "${available[@]}"; then return; fi
-    printf '%s\n' 'Проверь номера и границы диапазонов.' >&3
+    if (( DIALOG_AVAILABLE )); then
+      reply=$(ui --cr-wrap --inputbox "$numbered$hint" 19 70 "$reply") || cancel
+    else
+      printf '\n╭─ Этапы установки ─╮\n%s%s\n' "$numbered" "$hint" >&3
+      reply=$(read_prompt "$CURRENT_STAGE") || cancel
+    fi
+    if apply_skipped_stages "$reply" "${available[@]}"; then
+      if [[ -z ${STAGES[*]:-} ]]; then return; fi
+      if problem=$(check_plan); then
+        if confirm_stage_plan "${available[@]}"; then return; fi
+        continue
+      fi
+    else
+      problem="Проверь номера от 1 до ${#available[@]} и порядок в диапазоне."
+    fi
+    if (( DIALOG_AVAILABLE )); then ui --msgbox "$problem" 8 70 || cancel
+    else printf '%s\n' "$problem" >&3
+    fi
   done
 }
 
@@ -395,7 +393,7 @@ check_plan() {
     if selected install_mui; then needed+=(git); fi
     for tool in "${needed[@]}"; do
       if ! command -v "$tool" >/dev/null; then
-        printf 'Нужен %s. Выбери «Пакеты APT».\n' "$tool"
+        printf 'Нужен %s. Убери «Пакеты APT» из списка пропуска.\n' "$tool"
         return 1
       fi
     done
@@ -403,7 +401,7 @@ check_plan() {
   if ! selected install_docker; then
     if { selected install_xui || selected install_mui || selected install_dry; } &&
        ! docker_local info >/dev/null 2>&1; then
-      printf '%s\n' 'Выбери «Docker и Compose».'
+      printf '%s\n' 'Убери «Docker и Compose» из списка пропуска.'
       return 1
     fi
     if { selected install_xui || selected install_mui; } && ! docker_local compose version >/dev/null 2>&1; then
@@ -421,18 +419,12 @@ run_stages() {
 }
 
 run_setup() {
-  local problem default_port
+  local default_port
   ADMIN_USER= ADMIN_HOME= AUTH_MODE=
   unset ROOT_NEW_PASSWORD LINUX_PASSWORD
-  while true; do
-    CURRENT_STAGE='Этапы установки'
-    ask_stages
-    if [[ -z ${STAGES[*]:-} ]]; then printf '%s\n' 'Этапы не выбраны.' >&3; return; fi
-    if problem=$(check_plan); then break; fi
-    if (( DIALOG_AVAILABLE )); then ui --msgbox "$problem" 8 70 || cancel
-    else printf '%s\n' "$problem" >&3
-    fi
-  done
+  CURRENT_STAGE='Этапы установки'
+  ask_stages
+  if [[ -z ${STAGES[*]:-} ]]; then printf '%s\n' 'Все этапы пропущены.' >&3; return; fi
   detect_ssh_context
   SERVER_NAME=$(hostname -s)
   if selected change_root_password; then
@@ -504,7 +496,6 @@ show_access_cards() {
   section 'Готово'
   printf 'Хост  %s\nSSH   %s · порт %s\nssh %s %s@%s\n' \
     "$SERVER_NAME" "$SSH_LOGIN" "$SSH_PORT" "$ssh_args" "$SSH_LOGIN" "$SSH_HOST" >&3
-  if selected install_shell; then printf '%s\n' 'Для Zsh открой новый сеанс.' >&3; fi
   for panel in 3x-ui m-ui; do
     if [[ " ${READY_PANELS[*]} " == *" $panel "* ]]; then
       load_panel_state "/opt/$panel"
@@ -561,6 +552,14 @@ main() {
     local answer
     answer=$(read_prompt 'Удалить копию SSH-ключа с сервера? [д/Н]') || answer=
     if [[ $answer == д || $answer == y ]]; then rm -rf -- "$KEY_EXPORT_DIR"; fi
+  fi
+  if selected install_shell; then
+    CURRENT_STAGE='Zsh'
+    printf '\nОткрываю Zsh под %s. exit — вернуться.\n' "$ADMIN_USER" >&3
+    cleanup
+    trap - EXIT
+    exec 8>&- 3>&-
+    exec runuser --pty --login --shell "$(command -v zsh)" "$ADMIN_USER"
   fi
 }
 
