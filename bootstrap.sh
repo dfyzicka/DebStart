@@ -13,6 +13,7 @@ WORK_DIR=
 KEY_EXPORT_DIR=
 KEY_EXPORT_READY=0
 PRIVATE_SCREEN=0
+DIALOG_AVAILABLE=0
 APT_READY=0
 CURRENT_STAGE='Подготовка'
 READY_PANELS=()
@@ -20,7 +21,15 @@ declare -A STAGES=()
 declare -ar EXTRA_ORDER=(
   install_packages install_shell install_python install_docker install_xui install_mui install_dry
 )
-declare -Ar EXTRA_LABELS=(
+declare -ar STAGE_ORDER=(
+  change_root_password setup_admin_user configure_ssh set_server_hostname change_ssh_port "${EXTRA_ORDER[@]}"
+)
+declare -Ar STAGE_LABELS=(
+  [change_root_password]='Пароль root'
+  [setup_admin_user]='Пользователь и sudo'
+  [configure_ssh]='Доступ SSH'
+  [set_server_hostname]='Имя хоста'
+  [change_ssh_port]='Порт SSH'
   [install_packages]='Пакеты APT'
   [install_shell]='Oh My Zsh и скины MC'
   [install_python]="Python $PYTHON_VERSION"
@@ -75,7 +84,12 @@ cancel() {
 
 section() {
   CURRENT_STAGE=$1
-  printf '\n── %s ──\n' "$CURRENT_STAGE" >&3
+  printf '\n╭─ %s ─╮\n' "$CURRENT_STAGE" >&3
+}
+
+ui() {
+  dialog --backtitle 'DebStart · Настройка сервера' --title "$CURRENT_STAGE" \
+    --ok-label 'Далее' --cancel-label 'Отмена' "$@" 2>&1 1>&3 <&3
 }
 
 read_prompt() {
@@ -83,6 +97,28 @@ read_prompt() {
   printf '%s ' "$1" >&3
   IFS= read -r value <&3 || return 1
   printf '%s' "$value"
+}
+
+prompt_value() {
+  if (( DIALOG_AVAILABLE )); then
+    ui --inputbox "$1" 8 70 "${2:-}"
+  elif [[ -n ${2:-} ]]; then
+    read_prompt "$1 [$2]"
+  else
+    read_prompt "$1"
+  fi
+}
+
+read_secret() {
+  local secret
+  if (( DIALOG_AVAILABLE )); then
+    ui --passwordbox "$1" 8 70
+  else
+    printf '%s  ' "$1" >&3
+    IFS= read -rs secret <&3 || return 1
+    printf '\n' >&3
+    printf '%s' "$secret"
+  fi
 }
 
 step() {
@@ -113,13 +149,11 @@ selected() {
 }
 
 prompt_password() {
-  local label=$1 password confirmation
+  local label=$1 optional=${2:-0} password confirmation
   while true; do
-    printf '%s ' "$label" >&3
-    IFS= read -rs password <&3 || return 1
-    printf '\nПовтори пароль  ' >&3
-    IFS= read -rs confirmation <&3 || return 1
-    printf '\n' >&3
+    password=$(read_secret "$label") || return 1
+    if (( optional )) && [[ -z $password ]]; then return; fi
+    confirmation=$(read_secret 'Повтори пароль') || return 1
     if [[ -n $password && $password == "$confirmation" ]]; then
       printf '%s' "$password"
       return
@@ -129,32 +163,44 @@ prompt_password() {
 }
 
 ask_admin_user() {
-  local uid
+  local uid default_user=ops label='Логин'
+  if [[ ${SSH_LOGIN:-root} != root ]]; then default_user=$SSH_LOGIN; fi
+  if ! selected setup_admin_user; then label='Существующая учётка'; fi
   while true; do
-    ADMIN_USER=$(read_prompt 'Логин [ops]') || cancel
-    ADMIN_USER=${ADMIN_USER:-ops}
+    ADMIN_USER=$(prompt_value "$label" "$default_user") || cancel
+    ADMIN_USER=${ADMIN_USER:-$default_user}
     if [[ $ADMIN_USER =~ ^[a-z_][a-z0-9_-]{0,30}$ && $ADMIN_USER != root ]]; then
       uid=$(id -u "$ADMIN_USER" 2>/dev/null || true)
-      if [[ -z $uid ]] || (( uid >= 1000 && uid != 65534 )); then return; fi
+      if [[ -z $uid ]]; then
+        if selected setup_admin_user; then ADMIN_HOME=; return; fi
+      elif (( uid >= 1000 && uid != 65534 )); then
+        ADMIN_HOME=$(getent passwd "$ADMIN_USER" | cut -d: -f6)
+        return
+      fi
     fi
-    printf '%s\n' 'Укажи обычный логин Linux.' >&3
+    printf '%s\n' 'Укажи обычную учётку Linux.' >&3
   done
 }
 
 ask_auth() {
   local choice
-  printf '%s\n' '1 · Свой ключ   2 · Новый Ed25519   3 · Пароль' >&3
+  if (( DIALOG_AVAILABLE )); then
+    AUTH_MODE=$(ui --menu 'Вход по SSH' 12 70 3 key 'Свой ключ' generate 'Новый Ed25519' password 'Пароль') || cancel
+  else
+    printf '%s\n' '1 · Свой ключ   2 · Новый Ed25519   3 · Пароль' >&3
+    while true; do
+      choice=$(read_prompt 'Вход по SSH [1]') || cancel
+      case "${choice:-1}" in
+        1) AUTH_MODE=key; break ;;
+        2) AUTH_MODE=generate; break ;;
+        3) AUTH_MODE=password; break ;;
+      esac
+      printf '%s\n' 'Выбери 1, 2 или 3.' >&3
+    done
+  fi
+  if [[ $AUTH_MODE != key ]]; then return; fi
   while true; do
-    choice=$(read_prompt 'Вход по SSH [1]') || cancel
-    case "${choice:-1}" in
-      1) AUTH_MODE=key; break ;;
-      2) AUTH_MODE=generate; return ;;
-      3) AUTH_MODE=password; return ;;
-    esac
-    printf '%s\n' 'Выбери 1, 2 или 3.' >&3
-  done
-  while true; do
-    SSH_PUBLIC_KEY=$(read_prompt 'Вставь строку из файла .pub') || cancel
+    SSH_PUBLIC_KEY=$(prompt_value 'Вставь строку из файла .pub') || cancel
     SSH_PUBLIC_KEY=${SSH_PUBLIC_KEY%$'\r'}
     if check_pubkey "$SSH_PUBLIC_KEY"; then return; fi
     printf '%s\n' 'Нужен публичный ключ OpenSSH.' >&3
@@ -164,7 +210,7 @@ ask_auth() {
 ask_port() {
   local title=$1 default_port=$2 value
   while true; do
-    value=$(read_prompt "$title [$default_port]") || return 1
+    value=$(prompt_value "$title" "$default_port") || return 1
     value=${value:-$default_port}
     if [[ $value =~ ^[0-9]{1,5}$ ]] && (( 10#$value >= 1 && 10#$value <= 65535 )); then
       printf '%d' "$((10#$value))"
@@ -174,26 +220,44 @@ ask_port() {
   done
 }
 
-ask_ssh_address() {
-  local client_port address current_port
+detect_ssh_context() {
+  local client_port ports login effective
   IFS=' ' read -r SSH_CLIENT_IP client_port SSH_LOCAL_ADDR SSH_LOCAL_PORT <<< "${SSH_CONNECTION:-}"
   SSH_CLIENT_IP=${SSH_CLIENT_IP:-127.0.0.1}
-  address=${SSH_LOCAL_ADDR:-$(hostname -I | awk '{print $1}')}
-  current_port=${SSH_LOCAL_PORT:-$(sshd_ports 2>/dev/null | awk 'NR==1 {print}' || true)}
+  SSH_HOST=${SSH_LOCAL_ADDR:-$(hostname -I | awk 'NR==1 {print $1}')}
+  SSH_HOST=${SSH_HOST:-$(hostname)}
+  SSH_PORT=${SSH_LOCAL_PORT:-22}
+  if ports=$(live_ssh_ports 2>/dev/null) && [[ -n $ports ]]; then
+    if ! grep -Fxq "$SSH_PORT" <<< "$ports"; then SSH_PORT=${ports%%$'\n'*}; fi
+  elif selected configure_ssh || selected change_ssh_port; then
+    fail 'Не найден работающий SSH.'
+  fi
+  SSH_LOCAL_PORT=$SSH_PORT
+  login=${SUDO_USER:-$(logname 2>/dev/null || true)}
+  SSH_LOGIN=${login:-root}
+  if effective=$(/usr/sbin/sshd -T -f "$SSHD_CONFIG" 2>/dev/null); then
+    login=$(awk '$1=="allowusers" { $1=""; sub(/^ /,""); print }' <<< "$effective")
+    if [[ $login =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] && getent passwd "$login" >/dev/null; then
+      SSH_LOGIN=$login
+    fi
+  fi
+}
+
+ask_ssh_host() {
+  local address=$SSH_HOST
   while true; do
-    SSH_HOST=$(read_prompt "IP или домен [$address]") || cancel
+    SSH_HOST=$(prompt_value 'IP или домен для SCP' "$address") || cancel
     SSH_HOST=${SSH_HOST:-$address}
     if [[ $SSH_HOST =~ ^[a-zA-Z0-9:][a-zA-Z0-9.:-]*$ && ( $SSH_HOST != *:* || $SSH_HOST == *:*:* ) ]]; then
       break
     fi
     printf '%s\n' 'Укажи IP или домен без порта.' >&3
   done
-  SSH_PORT=$(ask_port 'Текущий порт SSH с компьютера' "${current_port:-22}") || cancel
 }
 
 ask_hostname() {
   while true; do
-    SERVER_NAME=$(read_prompt 'Имя хоста [server]') || cancel
+    SERVER_NAME=$(prompt_value 'Имя хоста' server) || cancel
     SERVER_NAME=${SERVER_NAME:-server}
     if [[ $SERVER_NAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]; then
       SERVER_NAME=${SERVER_NAME,,}
@@ -223,31 +287,34 @@ print_key_copy() {
     "$SSH_PORT" "$KEY_EXPORT_OWNER" "$scp_host" "$KEY_EXPORT_DIR" "$(ssh_key_name)"
 }
 
-verify_admin_access() {
-  local port=$1 reply
-  rm -f -- "$WORK_DIR/ssh-confirmed"
-  printf '\nПроверь вход и sudo в другом окне\n' >&3
-  printf 'ssh -t %s %s@%s "sudo touch -- %s/ssh-confirmed"\n' \
-    "$(ssh_arguments "$port")" "$ADMIN_USER" "$SSH_HOST" "$WORK_DIR" >&3
-  while [[ ! -f $WORK_DIR/ssh-confirmed ]]; do
-    printf 'Enter — проверить, q — откат. ' >&3
-    IFS= read -r -t 300 reply <&3 || return 1
-    [[ -z $reply ]] || return 1
-    if [[ ! -f $WORK_DIR/ssh-confirmed ]]; then printf '%s\n' 'Вход ещё не подтверждён.' >&3; fi
-  done
-}
-
 ask_stages() {
-  local stage reply choice valid
-  local -a available=() choices=()
+  local stage reply choice valid selection label
+  local -a available=() choices=() items=()
   local -A picked=()
-  for stage in "${EXTRA_ORDER[@]}"; do
+  for stage in "${STAGE_ORDER[@]}"; do
     if [[ $stage == install_mui && $ARCH != amd64 ]]; then continue; fi
     available+=("$stage")
+    items+=("$stage" "${STAGE_LABELS[$stage]}" "${STAGES[$stage]:-off}")
+  done
+  if (( DIALOG_AVAILABLE )); then
+    selection=$(ui --no-tags --separate-output --checklist \
+      'Пробел — выбрать. Enter — продолжить.' 0 70 12 "${items[@]}") || cancel
+    STAGES=()
+    while IFS= read -r stage; do
+      if [[ -n $stage ]]; then STAGES[$stage]=on; fi
+    done <<< "$selection"
+    return
+  fi
+  printf '%s\n' '╭──── Этапы установки ───────────────────────╮' >&3
+  local index=0
+  for stage in "${available[@]}"; do
+    index=$((index+1))
     choice=' '
     if selected "$stage"; then choice=x; fi
-    printf ' %s [%s] %s\n' "${#available[@]}" "$choice" "${EXTRA_LABELS[$stage]}" >&3
+    label=${STAGE_LABELS[$stage]}
+    printf '│ %2s [%s] %s%*s │\n' "$index" "$choice" "$label" "$((35-${#label}))" '' >&3
   done
+  printf '%s\n' '╰────────────────────────────────────────────╯' >&3
   while true; do
     reply=$(read_prompt 'Номера через пробел. Enter — текущий выбор, 0 — пропустить.') || cancel
     case "$reply" in
@@ -258,7 +325,7 @@ ask_stages() {
     picked=()
     valid=1
     for choice in "${choices[@]}"; do
-      if [[ ! $choice =~ ^[1-7]$ ]] || (( choice > ${#available[@]} )); then
+      if [[ ! $choice =~ ^[1-9][0-9]?$ ]] || (( choice > ${#available[@]} )); then
         valid=0
         break
       fi
@@ -276,12 +343,29 @@ ask_stages() {
 check_plan() {
   local tool
   local -a needed=()
+  if selected setup_admin_user || selected configure_ssh; then
+    command -v sudo >/dev/null && getent group sudo >/dev/null || {
+      printf '%s\n' 'Нужны sudo и группа sudo.'
+      return 1
+    }
+  fi
+  if selected configure_ssh || selected change_ssh_port; then
+    for tool in ssh ssh-keygen ssh-keyscan ss /usr/sbin/sshd; do
+      if ! command -v "$tool" >/dev/null; then
+        printf 'Нужен %s. Установи OpenSSH и iproute2.\n' "$tool"
+        return 1
+      fi
+    done
+    if [[ ! -f $SSHD_CONFIG || -L $SSHD_CONFIG ]]; then
+      printf '%s\n' 'Проверь /etc/ssh/sshd_config.'
+      return 1
+    fi
+  fi
   if ! selected install_packages; then
     if selected install_shell; then needed+=(git curl zsh fzf mc); fi
-    if selected install_python && [[ ! -x $ADMIN_HOME/.local/bin/uv ]]; then needed+=(pipx); fi
     if selected install_docker && ! docker_local compose version >/dev/null 2>&1; then needed+=(curl); fi
     if selected install_dry; then needed+=(curl python3); fi
-    if selected install_xui || selected install_mui; then needed+=(curl openssl); fi
+    if selected install_xui || selected install_mui; then needed+=(curl openssl ss); fi
     if selected install_mui; then needed+=(git); fi
     for tool in "${needed[@]}"; do
       if ! command -v "$tool" >/dev/null; then
@@ -306,55 +390,79 @@ check_plan() {
 run_stages() {
   local stage
   for stage in "${EXTRA_ORDER[@]}"; do
-    if selected "$stage"; then step "${EXTRA_LABELS[$stage]}" "$stage"; fi
+    if selected "$stage"; then step "${STAGE_LABELS[$stage]}" "$stage"; fi
   done
 }
 
 run_setup() {
-  section '1/5 · Пароль root'
-  ROOT_NEW_PASSWORD=$(prompt_password 'Новый пароль root') || cancel
-  run_step 'Пароль root' change_root_password
-
-  section '2/5 · Пользователь и SSH'
-  ask_admin_user
-  LINUX_PASSWORD=$(prompt_password "Пароль $ADMIN_USER для sudo") || cancel
-  ask_auth
-  ask_ssh_address
-  run_step 'Пользователь и sudo' setup_admin_user
-  run_step 'Доступ SSH' configure_ssh
-  verify_admin_access "$SSH_PORT" || fail 'Вход не подтверждён. Откат SSH.'
-  SSH_ACCESS_PENDING=0
-
-  section '3/5 · Имя хоста'
-  ask_hostname
-  run_step 'Имя хоста' set_server_hostname
-
-  section '4/5 · Порт SSH'
-  local default_port=${SSH_LOCAL_PORT:-$SSH_PORT}
-  if [[ $default_port == 22 ]]; then default_port=2233; fi
-  SSH_NEW_PORT=$(ask_port 'Новый порт SSH' "$default_port") || cancel
-  run_step 'Порт SSH' change_ssh_port
-  if (( SSH_PORT_PENDING )); then
-    verify_admin_access "$SSH_NEW_PORT" || fail 'Вход не подтверждён. Откат порта.'
-    run_step 'Закрываю старый порт' finish_ssh_port
-  fi
-
-  section '5/5 · Компоненты'
-  local problem
-  STAGES=([install_packages]=on [install_shell]=on [install_python]=on [install_docker]=on [install_xui]=on)
-  if [[ $ARCH == amd64 && -f /opt/m-ui/install.state ]]; then STAGES[install_mui]=on; fi
-  if [[ -x /usr/local/bin/dry ]]; then STAGES[install_dry]=on; fi
+  local problem default_port
+  ADMIN_USER= ADMIN_HOME= AUTH_MODE=
+  unset ROOT_NEW_PASSWORD LINUX_PASSWORD
   while true; do
+    CURRENT_STAGE='Этапы установки'
     ask_stages
+    if [[ -z ${STAGES[*]:-} ]]; then printf '%s\n' 'Этапы не выбраны.' >&3; return; fi
     if problem=$(check_plan); then break; fi
-    printf '%s\n' "$problem" >&3
+    if (( DIALOG_AVAILABLE )); then ui --msgbox "$problem" 8 70 || cancel
+    else printf '%s\n' "$problem" >&3
+    fi
   done
+  detect_ssh_context
+  SERVER_NAME=$(hostname -s)
+  if selected change_root_password; then
+    section 'Пароль root'
+    ROOT_NEW_PASSWORD=$(prompt_password 'Новый пароль root') || cancel
+    run_step 'Пароль root' change_root_password
+  fi
+  if selected setup_admin_user; then
+    section 'Пользователь и sudo'
+    ask_admin_user
+    if [[ -n $ADMIN_HOME ]]; then
+      LINUX_PASSWORD=$(prompt_password 'Новый пароль для sudo. Enter — оставить текущий.' 1) || cancel
+    else
+      LINUX_PASSWORD=$(prompt_password "Пароль $ADMIN_USER для sudo") || cancel
+    fi
+    run_step 'Пользователь и sudo' setup_admin_user
+  fi
+  if selected configure_ssh; then
+    section 'Доступ SSH'
+    if [[ -z $ADMIN_USER ]]; then ask_admin_user; fi
+    ask_auth
+    if [[ $AUTH_MODE == generate ]]; then ask_ssh_host; fi
+    run_step 'Доступ SSH' configure_ssh
+  fi
+  if selected set_server_hostname; then
+    section 'Имя хоста'
+    ask_hostname
+    run_step 'Имя хоста' set_server_hostname
+  fi
+  if selected change_ssh_port; then
+    section 'Порт SSH'
+    default_port=$SSH_PORT
+    if [[ $default_port == 22 ]]; then default_port=2233; fi
+    SSH_NEW_PORT=$(ask_port 'Новый порт SSH' "$default_port") || cancel
+    run_step 'Порт SSH' change_ssh_port
+  fi
+  unset LINUX_PASSWORD
+  if { selected install_shell || selected install_python; } && [[ -z $ADMIN_USER ]]; then
+    section 'Профиль пользователя'
+    ask_admin_user
+  fi
   run_live "$LOG_FILE" run_stages
 }
 
 show_panel_password() {
   local panel=$1 answer
   if [[ -z $PANEL_PASSWORD ]]; then return; fi
+  if (( DIALOG_AVAILABLE )); then
+    CURRENT_STAGE="$panel · Доступ"
+    printf 'URL     http://127.0.0.1:%s/%s/\nЛогин   %s\nПароль  %s\n' \
+      "$PANEL_PORT" "$PANEL_PATH" "$PANEL_USER" "$PANEL_PASSWORD" > "$WORK_DIR/panel.txt"
+    if ui --exit-label 'Сохранено' --textbox "$WORK_DIR/panel.txt" 13 70; then
+      acknowledge_panel_login "/opt/$panel"
+    fi
+    return
+  fi
   if command -v tput >/dev/null && tput smcup >&3 2>/dev/null; then PRIVATE_SCREEN=1; fi
   section "$panel · Доступ"
   printf 'URL     http://127.0.0.1:%s/%s/\nЛогин   %s\nПароль  %s\n' \
@@ -369,7 +477,7 @@ show_access_cards() {
   ssh_args=$(ssh_arguments "$SSH_PORT")
   section 'Готово'
   printf 'Хост  %s\nSSH   %s · порт %s\nssh %s %s@%s\n' \
-    "$SERVER_NAME" "$ADMIN_USER" "$SSH_PORT" "$ssh_args" "$ADMIN_USER" "$SSH_HOST" >&3
+    "$SERVER_NAME" "$SSH_LOGIN" "$SSH_PORT" "$ssh_args" "$SSH_LOGIN" "$SSH_HOST" >&3
   if selected install_shell; then printf '%s\n' 'Для Zsh открой новый сеанс.' >&3; fi
   for panel in 3x-ui m-ui; do
     if [[ " ${READY_PANELS[*]} " == *" $panel "* ]]; then
@@ -384,14 +492,14 @@ show_access_cards() {
     show_panel_password "$panel"
     printf '\n%s · Туннель с компьютера\n' "$panel" >&3
     printf 'ssh %s -o ExitOnForwardFailure=yes -N -L 127.0.0.1:%s:127.0.0.1:%s %s@%s\n' \
-      "$ssh_args" "$PANEL_PORT" "$PANEL_PORT" "$ADMIN_USER" "$SSH_HOST" >&3
+      "$ssh_args" "$PANEL_PORT" "$PANEL_PORT" "$SSH_LOGIN" "$SSH_HOST" >&3
     printf 'URL     http://127.0.0.1:%s/%s/\nЛогин   %s\n' "$PANEL_PORT" "$PANEL_PATH" "$PANEL_USER" >&3
   done
   printf '\nЖурнал  %s\n' "$LOG_FILE" >&3
 }
 
 main() {
-  local tool
+  local rows cols
   if [[ ${1:-} == --help ]]; then
     printf '%s\n' 'DebStart · Debian 12/13 и Ubuntu 22.04/24.04/26.04 LTS' 'sudo bash bootstrap.sh'
     return
@@ -403,16 +511,10 @@ main() {
   [[ -d /run/systemd/system ]] || fail 'Нужен запущенный systemd.'
   ARCH=$(dpkg --print-architecture)
   [[ $ARCH == amd64 || $ARCH == arm64 ]] || fail 'Нужна архитектура amd64 или arm64.'
-  for tool in sudo ssh-keygen ss /usr/sbin/sshd; do
-    command -v "$tool" >/dev/null || fail 'До запуска установи sudo, openssh-server и iproute2.'
-  done
-  getent group sudo >/dev/null || fail 'Нужна группа sudo.'
-  [[ -f $SSHD_CONFIG && ! -L $SSHD_CONFIG ]] || fail 'Проверь /etc/ssh/sshd_config.'
-  if ! systemctl is-active --quiet ssh.service && ! systemctl is-active --quiet ssh.socket; then
-    fail 'Сначала запусти OpenSSH.'
-  fi
-
   exec 3<>/dev/tty
+  read -r rows cols <<< "$(stty size <&3 2>/dev/null || true)"
+  if [[ ${TERM:-dumb} != dumb ]] && (( ${rows:-0} >= 20 && ${cols:-0} >= 72 )) &&
+     command -v dialog >/dev/null; then DIALOG_AVAILABLE=1; fi
   exec 8>/run/debian-start.lock
   flock -n 8 || fail 'DebStart уже запущен.'
   [[ ! -L $LOG_FILE ]] || fail "Проверь $LOG_FILE."
@@ -427,6 +529,7 @@ main() {
 
   printf 'DebStart · %s\n' "$DISTRO_LABEL" >&3
   run_setup
+  if [[ -z ${STAGES[*]:-} ]]; then return; fi
   show_access_cards
   if (( KEY_EXPORT_READY )); then
     local answer

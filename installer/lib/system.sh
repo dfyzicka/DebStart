@@ -140,8 +140,7 @@ setup_admin_user() {
   fi
   usermod -aG sudo "$ADMIN_USER"
   ADMIN_HOME=$(getent passwd "$ADMIN_USER" | cut -d: -f6)
-  printf '%s:%s\n' "$ADMIN_USER" "$LINUX_PASSWORD" | chpasswd
-  unset LINUX_PASSWORD
+  if [[ -n $LINUX_PASSWORD ]]; then printf '%s:%s\n' "$ADMIN_USER" "$LINUX_PASSWORD" | chpasswd; fi
 }
 
 install_authorized_key() {
@@ -258,6 +257,7 @@ install_shell() {
 install_python() {
   local uv="$ADMIN_HOME/.local/bin/uv" version
   if [[ ! -x $uv ]]; then
+    command -v pipx >/dev/null || fail 'Нужен pipx. Выбери «Пакеты APT».'
     as_admin pipx install uv
   fi
   as_admin "$uv" python install "$PYTHON_VERSION" --default

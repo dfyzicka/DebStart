@@ -20,7 +20,7 @@ trap 'rm -rf -- "$state_dir"' EXIT
   fixture_selection=0
   ask_stages
   [[ -z ${STAGES[*]:-} ]]
-  fixture_selection='6 7'
+  fixture_selection='11 12'
   ask_stages
   selected install_mui
   selected install_dry
@@ -59,29 +59,41 @@ grep -Fq '✓ Пароль root' "$state_dir/live.log"
 ! grep -Fq "root:$fixture_password" "$state_dir/live.log"
 [[ $(< "$state_dir/password-stdin") == "root:$fixture_password" ]]
 
-# Check that package operations follow both SSH confirmations.
+# Check selected steps execute in order and a port-only run asks for no passwords.
 (
   exec 3>"$state_dir/setup-ui"
   prompt_password() { printf 'x'; }
   ask_admin_user() { ADMIN_USER=ops; }
   ask_auth() { AUTH_MODE=password; }
-  ask_ssh_address() { SSH_PORT=22 SSH_LOCAL_PORT=22; }
+  detect_ssh_context() { SSH_PORT=22 SSH_LOCAL_PORT=22 SSH_LOGIN=root; }
   ask_hostname() { SERVER_NAME=server; }
   ask_port() { printf '2233'; }
-  ask_stages() { STAGES=([install_packages]=on [install_shell]=on); }
+  ask_stages() {
+    if [[ $fixture_selection == port ]]; then STAGES=([change_ssh_port]=on)
+    else
+      STAGES=([change_root_password]=on [setup_admin_user]=on [configure_ssh]=on
+              [set_server_hostname]=on [change_ssh_port]=on [install_packages]=on [install_shell]=on)
+    fi
+  }
+  check_plan() { :; }
   run_live() { shift; "$@"; }
   trace() { printf '%s\n' "$1" >> "$state_dir/order"; }
   change_root_password() { trace root; }
   setup_admin_user() { trace user; }
-  configure_ssh() { SSH_ACCESS_PENDING=1; trace access; }
-  verify_admin_access() { trace "verify-$1"; }
+  configure_ssh() { trace access; }
   set_server_hostname() { [[ $SSH_ACCESS_PENDING == 0 ]]; trace hostname; }
-  change_ssh_port() { SSH_PORT_PENDING=1; trace port; }
-  finish_ssh_port() { SSH_PORT_PENDING=0; trace close-old; }
+  change_ssh_port() { [[ $SSH_NEW_PORT == 2233 && $SSH_PORT == 22 ]]; SSH_PORT=2233; trace port; }
   install_packages() { [[ $SSH_PORT_PENDING == 0 ]]; trace packages; }
   install_shell() { trace shell; }
+  fixture_selection=all
   run_setup > "$state_dir/setup-output"
-  diff -u <(printf '%s\n' root user access verify-22 hostname port verify-2233 close-old packages shell) "$state_dir/order"
+  diff -u <(printf '%s\n' root user access hostname port packages shell) "$state_dir/order"
+  : > "$state_dir/order"
+  fixture_selection=port
+  prompt_password() { trace password-prompt; printf 'x'; }
+  ask_admin_user() { trace user-prompt; ADMIN_USER=ops; }
+  run_setup > "$state_dir/setup-output"
+  [[ $(< "$state_dir/order") == port && $SSH_PORT == 2233 ]]
 )
 
 cat > "$state_dir/sshd-before" <<'CONFIG'
@@ -98,6 +110,14 @@ sshd_body port "$state_dir/sshd-access" > "$state_dir/sshd-port"
 grep -Fxq 'Port 22' "$state_dir/sshd-access"
 grep -Fxq 'UsePAM yes' "$state_dir/sshd-port"
 ! grep -iEq 'allowusers|permitrootlogin|passwordauthentication|^port ' "$state_dir/sshd-port"
+
+# Match the requested local port even when ss returns unrelated listeners.
+(
+  ss() { printf '%s\n' 'LISTEN 0 128 127.0.0.1:22 0.0.0.0:*' 'LISTEN 0 128 127.0.0.1:2222 0.0.0.0:*'; }
+  ssh_listening 22
+  if ssh_listening 2233; then exit 1; fi
+  [[ $(ssh_listener_rows 22) == 'LISTEN 0 128 127.0.0.1:22 0.0.0.0:*' ]]
+)
 
 # Check a port change preserves socket binding addresses in both phases.
 (
@@ -141,7 +161,7 @@ grep -Fxq 'UsePAM yes' "$state_dir/sshd-port"
   STAGES=([install_xui]=on)
   WORK_DIR=$state_dir
   READY_PANELS=(3x-ui)
-  SERVER_NAME=server ADMIN_USER=ops AUTH_MODE=password SSH_PORT=2233 SSH_HOST=203.0.113.10
+  SERVER_NAME=server ADMIN_USER=ops SSH_LOGIN=ops AUTH_MODE=password SSH_PORT=2233 SSH_HOST=203.0.113.10
   load_panel_state() {
     [[ $1 == /opt/3x-ui ]]
     PANEL_PORT=2081 PANEL_PATH=1122334455667788 PANEL_USER=panel11223344 PANEL_PASSWORD=fixture-private
