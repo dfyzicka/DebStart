@@ -287,26 +287,69 @@ print_key_copy() {
     "$SSH_PORT" "$KEY_EXPORT_OWNER" "$scp_host" "$KEY_EXPORT_DIR" "$(ssh_key_name)"
 }
 
+apply_stage_numbers() {
+  local reply=$1 token first last number stage exclude=0
+  shift
+  local -a available=("$@") choices=()
+  local -A marked=()
+  reply=${reply//–/-}
+  reply=${reply//—/-}
+  read -ra choices <<< "${reply//,/ }"
+  if [[ -z ${choices[*]:-} ]]; then return 0; fi
+  if [[ ${choices[*]} == 0 ]]; then STAGES=(); return 0; fi
+  if [[ ${choices[0],,} == кроме ]]; then
+    exclude=1
+    choices=("${choices[@]:1}")
+    [[ -n ${choices[*]:-} ]] || return 1
+  fi
+  for token in "${choices[@]}"; do
+    [[ $token =~ ^([1-9][0-9]?)(-([1-9][0-9]?))?$ ]] || return 1
+    first=${BASH_REMATCH[1]}
+    last=${BASH_REMATCH[3]:-$first}
+    (( first <= last && last <= ${#available[@]} )) || return 1
+    for ((number=first; number<=last; number++)); do
+      marked[${available[number-1]}]=1
+    done
+  done
+  STAGES=()
+  for stage in "${available[@]}"; do
+    if (( ${marked[$stage]:-0} != exclude )); then STAGES[$stage]=on; fi
+  done
+}
+
 ask_stages() {
-  local stage reply choice valid selection label
-  local -a available=() choices=() items=()
-  local -A picked=()
+  local stage reply choice selection status label numbered= index=0
+  local hint=$'кроме 1-3 7 — пропустить эти этапы\n2-5 8 — выполнить · 0 — снять всё'
+  local -a available=() items=()
   for stage in "${STAGE_ORDER[@]}"; do
     if [[ $stage == install_mui && $ARCH != amd64 ]]; then continue; fi
     available+=("$stage")
-    items+=("$stage" "${STAGE_LABELS[$stage]}" "${STAGES[$stage]:-off}")
+    index=$((index+1))
+    printf -v label '%2d · %s' "$index" "${STAGE_LABELS[$stage]}"
+    items+=("$stage" "$label" "${STAGES[$stage]:-off}")
+    numbered+="$label"$'\n'
   done
   if (( DIALOG_AVAILABLE )); then
-    selection=$(ui --no-tags --separate-output --checklist \
-      'Пробел — выбрать. Enter — продолжить.' 0 70 12 "${items[@]}") || cancel
-    STAGES=()
-    while IFS= read -r stage; do
-      if [[ -n $stage ]]; then STAGES[$stage]=on; fi
-    done <<< "$selection"
-    return
+    while true; do
+      if selection=$(ui --no-tags --separate-output --extra-button --extra-label 'По номерам' \
+        --checklist 'Пробел — отметить. Tab — кнопка «По номерам».' 0 70 12 "${items[@]}"); then
+        STAGES=()
+        while IFS= read -r stage; do
+          if [[ -n $stage ]]; then STAGES[$stage]=on; fi
+        done <<< "$selection"
+        return
+      else
+        status=$?
+        [[ $status == 3 ]] || cancel
+      fi
+      while reply=$(ui --cr-wrap --cancel-label 'Назад' --inputbox "$numbered$hint" 19 70); do
+        if apply_stage_numbers "$reply" "${available[@]}"; then return; fi
+        ui --msgbox 'Проверь номера и границы диапазонов.' 8 70 || break
+      done
+    done
   fi
   printf '%s\n' '╭──── Этапы установки ───────────────────────╮' >&3
-  local index=0
+  index=0
   for stage in "${available[@]}"; do
     index=$((index+1))
     choice=' '
@@ -315,28 +358,11 @@ ask_stages() {
     printf '│ %2s [%s] %s%*s │\n' "$index" "$choice" "$label" "$((35-${#label}))" '' >&3
   done
   printf '%s\n' '╰────────────────────────────────────────────╯' >&3
+  printf '%s\n' "$hint" >&3
   while true; do
-    reply=$(read_prompt 'Номера через пробел. Enter — текущий выбор, 0 — пропустить.') || cancel
-    case "$reply" in
-      '') return ;;
-      0) STAGES=(); return ;;
-    esac
-    read -ra choices <<< "$reply"
-    picked=()
-    valid=1
-    for choice in "${choices[@]}"; do
-      if [[ ! $choice =~ ^[1-9][0-9]?$ ]] || (( choice > ${#available[@]} )); then
-        valid=0
-        break
-      fi
-      picked[${available[choice-1]}]=x
-    done
-    if (( valid )) && [[ -n ${picked[*]:-} ]]; then
-      STAGES=()
-      for stage in "${!picked[@]}"; do STAGES[$stage]=on; done
-      return
-    fi
-    printf '%s\n' 'Проверь номера этапов.' >&3
+    reply=$(read_prompt 'Этапы. Enter — текущий выбор') || cancel
+    if apply_stage_numbers "$reply" "${available[@]}"; then return; fi
+    printf '%s\n' 'Проверь номера и границы диапазонов.' >&3
   done
 }
 

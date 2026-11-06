@@ -14,12 +14,38 @@ detect_platform() {
   DISTRO_LABEL="${ID^} $VERSION_ID"
 }
 
-apt_run() {
+apt_run() (
+  local apt_output status
+  local -a result
+  apt_output=$(mktemp "${WORK_DIR:-/tmp}/debstart-apt.XXXXXXXX") || return
+  trap 'rm -f -- "$apt_output"' EXIT
   printf '  apt-get'
   printf ' %q' "$@"
   printf '\n'
-  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 -o Dpkg::Options::=--force-confold "$@"
-}
+  while true; do
+    if LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get \
+      -o DPkg::Lock::Timeout=0 -o Dpkg::Options::=--force-confold "$@" 2>&1 |
+      tee "$apt_output"; then
+      return 0
+    else
+      result=("${PIPESTATUS[@]}")
+    fi
+    status=${result[0]}
+    if (( result[1] != 0 )); then return "${result[1]}"; fi
+    if (( status != 100 )) || ! awk '
+      /^(E:|Error:) Could not get lock .*([.] It is held by process [0-9]+|[(]11: Resource temporarily unavailable[)])/ {
+        locked=1; next
+      }
+      /^(E:|Error:) Unable to (lock (the (administration|download) )?directory|acquire the dpkg frontend lock) / { next }
+      /^(E:|Error:)/ { other=1 }
+      END { exit !(locked && !other) }
+    ' "$apt_output"; then
+      return "$status"
+    fi
+    printf '%s\n' 'APT занят. Жду освобождения блокировки…'
+    sleep 5
+  done
+)
 
 update_apt_indexes() {
   apt_run update

@@ -25,6 +25,63 @@ trap 'rm -rf -- "$state_dir"' EXIT
   selected install_mui
   selected install_dry
   ! selected install_xui
+  fixture_selection='2-5,8'
+  ask_stages
+  [[ ${#STAGES[@]} == 5 ]]
+  selected setup_admin_user
+  selected change_ssh_port
+  selected install_python
+  fixture_selection='кроме 1–3 7'
+  ask_stages
+  [[ ${#STAGES[@]} == 8 ]]
+  if selected change_root_password || selected configure_ssh || selected install_shell; then exit 1; fi
+  selected install_packages
+  ARCH=arm64
+  fixture_selection='кроме 1-10'
+  ask_stages
+  [[ ${#STAGES[@]} == 1 ]]
+  selected install_dry
+  for invalid in 'кроме' 'кроме 0' '3-1' '1 3-99' '0 2'; do
+    if apply_stage_numbers "$invalid" first second third; then exit 1; fi
+    [[ ${#STAGES[@]} == 1 ]]
+    selected install_dry
+  done
+)
+
+# The wrapper retries APT lock contention and returns other failures.
+(
+  WORK_DIR=$state_dir
+  apt-get() {
+    if [[ -e $WORK_DIR/apt-retried ]]; then return 0; fi
+    case "$fixture_apt" in
+      lists)
+        printf '%s\n' \
+          'E: Could not get lock /var/lib/apt/lists/lock. It is held by process 7340 (apt-get)' \
+          'E: Unable to lock directory /var/lib/apt/lists/' >&2 ;;
+      dpkg)
+        printf '%s\n' \
+          'Error: Could not get lock /var/lib/dpkg/lock-frontend - open (11: Resource temporarily unavailable)' \
+          'Error: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), is another process using it?' >&2 ;;
+      denied)
+        printf '%s\n' 'E: Could not open lock file /var/lib/apt/lists/lock - open (13: Permission denied)' >&2 ;;
+    esac
+    return 100
+  }
+  sleep() {
+    [[ $1 == 5 ]]
+    touch "$WORK_DIR/apt-retried"
+  }
+  for fixture_apt in lists dpkg; do
+    rm -f -- "$WORK_DIR/apt-retried"
+    apt_run update > "$WORK_DIR/apt-test"
+    [[ -f $WORK_DIR/apt-retried ]]
+    grep -Fq 'APT занят' "$WORK_DIR/apt-test"
+  done
+  rm -f -- "$WORK_DIR/apt-retried"
+  fixture_apt=denied
+  status=0
+  apt_run update > "$WORK_DIR/apt-test" || status=$?
+  [[ $status == 100 && ! -e $WORK_DIR/apt-retried ]]
 )
 
 while read -r fixture_id fixture_version fixture_codename fixture_ls fixture_tldr; do
