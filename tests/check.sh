@@ -214,7 +214,14 @@ if grep -iEq 'clientalive|tcpkeepalive' "$state_dir/sshd-port"; then exit 1; fi
   WORK_DIR=$state_dir
   ADMIN_USER=fixture
   ADMIN_HOME="$state_dir/admin"
-  mkdir "$ADMIN_HOME" "$state_dir/caller"
+  root_fixture="$state_dir/root"
+  root_nanorc="$root_fixture/.config/nano/nanorc"
+  mkdir -p "$ADMIN_HOME" "$state_dir/caller" "${root_nanorc%/*}"
+  printf '%s\n' 'set historylog' > "$root_nanorc"
+  getent() {
+    [[ $* == 'passwd root' ]]
+    printf 'root:x:0:0:root:%s:/bin/bash\n' "$root_fixture"
+  }
   clone_shell_component() { :; }
   curl() { printf '%s\n' '# Ajnasz Blue Theme' > "${!#}"; }
   runuser() {
@@ -231,6 +238,14 @@ if grep -iEq 'clientalive|tcpkeepalive' "$state_dir/sshd-port"; then exit 1; fi
   cmp installer/profile/zshrc "$ADMIN_HOME/.zshrc"
   cmp installer/profile/p10k.zsh "$ADMIN_HOME/.p10k.zsh"
   cmp installer/profile/nanorc "$ADMIN_HOME/.nanorc"
+  grep -Fxq 'set historylog' "$root_nanorc.before-debian-start"
+  {
+    printf '%s\n' 'set historylog' '# BEGIN DebStart Nano'
+    cat installer/profile/nanorc
+    printf '\n%s\n' '# END DebStart Nano'
+  } > "$state_dir/root-expected"
+  cmp "$state_dir/root-expected" "$root_nanorc"
+  [[ ! -e $root_fixture/.nanorc ]]
   cmp installer/profile/mc/skins/dracula.ini "$ADMIN_HOME/.local/share/mc/skins/dracula.ini"
   cmp installer/profile/mc/skins/dracula256.ini "$ADMIN_HOME/.local/share/mc/skins/dracula256.ini"
   grep -Fxq 'skin=dracula256' "$ADMIN_HOME/.config/mc/ini"
@@ -246,6 +261,43 @@ if grep -iEq 'clientalive|tcpkeepalive' "$state_dir/sshd-port"; then exit 1; fi
   printf '# local edit\n' >> "$ADMIN_HOME/.zshrc"
   install_shell
   grep -Fxq '# local edit' "$ADMIN_HOME/.zshrc"
+  cmp "$state_dir/root-expected" "$root_nanorc"
+  if compgen -G "$root_nanorc.before-debian-start.*" >/dev/null; then exit 1; fi
+)
+
+# Grant local Docker access on an already installed engine.
+(
+  DISTRO_ID=ubuntu
+  ADMIN_USER=ops SUDO_USER=caller SSH_LOGIN=ssh-user
+  docker() { return 1; }
+  docker_local() { [[ $* == info || $* == 'compose version' ]]; }
+  ensure_apt_indexes() { return 1; }
+  id() {
+    [[ $* == "-u -- $expected_user" ]] || return 1
+    if [[ $expected_user == root ]]; then printf '0\n'; else printf '1000\n'; fi
+  }
+  getent() { [[ $* == 'group docker' && -e $state_dir/docker-group ]]; }
+  groupadd() {
+    [[ $* == '--system docker' ]]
+    touch "$state_dir/docker-group"
+  }
+  usermod() {
+    [[ $* == "-aG docker -- $expected_user" ]]
+    printf 'group %s\n' "$expected_user" >> "$state_dir/docker-actions"
+  }
+  runuser() {
+    [[ $* == "-u $expected_user -- env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host unix:///var/run/docker.sock info" ]] || return 1
+    printf 'access %s\n' "$expected_user" >> "$state_dir/docker-actions"
+  }
+  expected_user=ops
+  install_docker
+  ADMIN_USER=
+  expected_user=caller
+  install_docker
+  SUDO_USER= SSH_LOGIN=root
+  expected_user=root
+  install_docker
+  diff -u <(printf '%s\n' 'group ops' 'access ops' 'group caller' 'access caller') "$state_dir/docker-actions"
 )
 
 # Configure and verify 3x-ui in one container with piped credentials.

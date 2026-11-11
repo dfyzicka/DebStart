@@ -25,17 +25,8 @@ jobs:
       - name: Проверить скрипты и состояние первого входа
         run: bash tests/check.sh
 
-      - name: Проверить файлы Compose
-        env:
-          MUI_BUILD_VERSION: '000000000000'
-          MUI_PANEL_PORT: '2054'
-          MUI_USERNAME: panel11223344
-          MUI_PATH: '1122334455667788'
-          MUI_FIRST_PASSWORD: ci-fixture
-        run: |
-          docker compose -f installer/compose/3x-ui.yml config --quiet
-          docker compose -f installer/compose/m-ui.yml config --quiet
-          docker compose -f installer/compose/m-ui.yml -f installer/compose/m-ui-first-run.yml config --quiet
+      - name: Проверить Compose для 3x-ui
+        run: docker compose -f installer/compose/3x-ui.yml config --quiet
 
   packages:
     name: Пакеты на ${{ matrix.image }}

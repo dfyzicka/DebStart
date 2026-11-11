@@ -10,7 +10,8 @@ package_installed() {
 }
 
 install_docker() {
-  local package fingerprint candidate
+  local package fingerprint candidate uid
+  local docker_user=${ADMIN_USER:-${SUDO_USER:-${SSH_LOGIN:-}}}
   local docker_repository="https://download.docker.com/linux/$DISTRO_ID"
   if ! command -v docker >/dev/null || ! docker_local compose version >/dev/null 2>&1; then
     ensure_apt_indexes
@@ -61,6 +62,17 @@ EOF
   fi
   docker_local info >/dev/null
   docker_local compose version
+
+  if [[ -n $docker_user ]] && uid=$(id -u -- "$docker_user" 2>/dev/null) &&
+     (( uid >= 1000 && uid != 65534 )); then
+    getent group docker >/dev/null || groupadd --system docker
+    usermod -aG docker -- "$docker_user"
+    if ! runuser -u "$docker_user" -- env -u DOCKER_HOST -u DOCKER_CONTEXT \
+      -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host unix:///var/run/docker.sock info >/dev/null; then
+      fail "Не удалось подключиться к локальному Docker от имени $docker_user."
+    fi
+    printf 'Docker без sudo · %s · в новом сеансе\n' "$docker_user"
+  fi
 }
 
 install_dry() {

@@ -231,6 +231,30 @@ install_profile_file() {
   ' bash "$dst" < "$src"
 }
 
+install_root_nanorc() {
+  local ADMIN_USER=root ADMIN_HOME target=.nanorc config="$WORK_DIR/root.nanorc"
+  ADMIN_HOME=$(getent passwd root | cut -d: -f6)
+  [[ $ADMIN_HOME == /* && -d $ADMIN_HOME ]] || fail 'Не найден домашний каталог root.'
+  if ! as_admin test -e "$target" && as_admin test -f .config/nano/nanorc; then
+    target=.config/nano/nanorc
+  fi
+  {
+    if as_admin test -f "$target"; then
+      as_admin awk '
+        $0 == "# BEGIN DebStart Nano" { managed=1; next }
+        managed && $0 == "# END DebStart Nano" { managed=0; next }
+        !managed { print }
+        END { if (managed) exit 1 }
+      ' "$target" || fail "Проверь блок DebStart Nano в $ADMIN_HOME/$target."
+    fi
+    printf '%s\n' '# BEGIN DebStart Nano'
+    cat -- "$INSTALLER_DIR/profile/nanorc"
+    printf '\n%s\n' '# END DebStart Nano'
+  } > "$config"
+  install_profile_file "$config" "$target"
+  printf 'Настройки sudo nano · %s/%s\n' "$ADMIN_HOME" "$target"
+}
+
 install_shell() {
   local skin profile_state=.local/state/debian-start/profile-v1
   local zshrc="$INSTALLER_DIR/profile/zshrc" zshrc_digest
@@ -286,6 +310,7 @@ install_shell() {
       '(( $+functions[omz] && $+functions[p10k] ))' </dev/null; then
     fail "Oh My Zsh или Powerlevel10k не загрузились под $ADMIN_USER. Проверь .zshrc и ZDOTDIR этой учётки."
   fi
+  install_root_nanorc
   usermod -s "$(command -v zsh)" "$ADMIN_USER"
   printf '%s\n' "$zshrc_digest" | as_admin tee "$profile_state" >/dev/null
   printf 'Oh My Zsh и Powerlevel10k загрузились под %s.\n' "$ADMIN_USER"
