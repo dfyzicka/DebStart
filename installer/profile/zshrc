@@ -1,0 +1,53 @@
+# Keep Powerlevel10k's instant prompt near the beginning of startup.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+typeset -U path
+path=("$HOME/.local/bin" $path)
+export MANOPT='-L ru'
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="powerlevel10k/powerlevel10k"
+zstyle ':omz:update' mode disabled
+
+plugins=(
+  sudo
+  z
+  zsh-interactive-cd
+  fzf
+  zsh-autosuggestions
+  zsh-syntax-highlighting
+)
+source "$ZSH/oh-my-zsh.sh"
+[[ ! -r "$HOME/.p10k.zsh" ]] || source "$HOME/.p10k.zsh"
+
+if (( $+commands[eza] )); then
+  alias sl='eza -bghHliS'
+else
+  alias sl='exa -bghHliS'
+fi
+alias fd='fdfind'
+if (( $+commands[batcat] )); then
+  alias bat='batcat'
+fi
+if (( $+commands[fastfetch] )); then
+  alias neofetch='fastfetch'
+fi
+alias st='speedtest-cli --no-upload'
+alias bt='bpytop'
+alias cls='clear'
+alias nz='nano ~/.zshrc'
+alias dk='sudo dry'
+alias dclean='sudo docker compose down -v && sudo docker system prune -f'
+alias gdm='sudo google-drive-ocamlfuse /mnt/googledrive'
+alias gdum='sudo fusermount -u /mnt/googledrive'
+alias rem='sudo rm -rf'
+alias isp='sudo chmod +x'
+alias sys='sudo systemctl'
+alias systart='sudo systemctl start'
+alias systop='sudo systemctl stop'
+alias syss='sudo systemctl status'
+alias sysr='sudo systemctl restart'
+alias won='sudo systemctl start webmin.service'
+alias woff='sudo systemctl stop webmin.service'
+alias ws='sudo systemctl status webmin.service'
